@@ -1,24 +1,35 @@
-import { dateAt, priceBtcAt, valueAt, type CoinView } from '../lib/data'
+import { dateAt, extremes, hasStopped, priceBtcAt, relPct, type CoinView } from '../lib/data'
 import { formatBtc, formatCompactUsd, formatDate, formatMonthYear, formatPct } from '../lib/format'
 
 type Props = {
   coin: CoinView
   day: number
+  baseDay: number
+  cohortLabel: string
   rank: number
+  active: boolean
   onClose: () => void
 }
 
-export function DetailCard({ coin, day, rank, onClose }: Props) {
-  const value = valueAt(coin, day) - 1
-  const peak = coin.peak.value - 1
-  const trough = coin.trough.value - 1
+export function DetailCard({ coin, day, baseDay, cohortLabel, rank, active, onClose }: Props) {
+  // Coins that had already stopped trading are quoted over their whole life instead,
+  // since re-basing them to the snapshot date would just read 0%.
+  const hasData = coin.vals.length > 0
+  const anchor = active ? baseDay : coin.from
+  const shownDay = active ? day : coin.until
+  const value = relPct(coin, shownDay, anchor)
+  const { peak, trough } = extremes(coin, anchor)
 
   return (
     <section className="detail" style={{ ['--coin' as string]: coin.color }}>
       <div className="detail-head">
         <div>
           <div className="detail-kicker">
-            Rank {rank} · {coin.dagger ? 'no longer tracked' : 'still tracked'}
+            {!hasData
+              ? 'No price history'
+              : active
+                ? `Rank ${rank} · ${hasStopped(coin) ? 'no longer tracked' : 'still tracked'}`
+                : 'Not tracked in this window'}
           </div>
           <div className="detail-name">
             {coin.name}
@@ -32,30 +43,36 @@ export function DetailCard({ coin, day, rank, onClose }: Props) {
       </div>
 
       <div className="detail-value" style={{ color: coin.ink }}>
-        {formatPct(value)}
+        {!hasData ? '—' : active ? formatPct(value) : '—'}
       </div>
-      <div className="detail-sub">vs bitcoin · {formatDate(dateAt(day))}</div>
+      <div className="detail-sub">
+        {!hasData
+          ? 'This coin has no usable price series in our sources.'
+          : active
+            ? `vs bitcoin · ${formatDate(dateAt(shownDay))}`
+            : `final ${formatPct(value)} vs bitcoin · stopped ${formatMonthYear(dateAt(coin.until))}`}
+      </div>
 
       <div className="detail-grid">
         <div>
           <span className="dlabel">Peak</span>
-          <span className="dval">{formatPct(peak)}</span>
-          <span className="dsub">{formatMonthYear(dateAt(coin.peak.day))}</span>
+          <span className="dval">{hasData ? formatPct(peak.value) : '—'}</span>
+          <span className="dsub">{hasData ? formatMonthYear(dateAt(peak.day)) : 'no data'}</span>
         </div>
         <div>
           <span className="dlabel">Trough</span>
-          <span className="dval">{formatPct(trough)}</span>
-          <span className="dsub">{formatMonthYear(dateAt(coin.trough.day))}</span>
+          <span className="dval">{hasData ? formatPct(trough.value) : '—'}</span>
+          <span className="dsub">{hasData ? formatMonthYear(dateAt(trough.day)) : 'no data'}</span>
         </div>
         <div>
           <span className="dlabel">Price</span>
-          <span className="dval">{formatBtc(priceBtcAt(coin, day))} BTC</span>
+          <span className="dval">{formatBtc(priceBtcAt(coin, shownDay, baseDay))} BTC</span>
           <span className="dsub">at this date</span>
         </div>
         <div>
           <span className="dlabel">Market cap</span>
           <span className="dval">{formatCompactUsd(coin.mcap)}</span>
-          <span className="dsub">18 Jun 2017</span>
+          <span className="dsub">{cohortLabel}</span>
         </div>
       </div>
     </section>

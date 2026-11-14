@@ -3,18 +3,22 @@ import { Chart } from './components/Chart'
 import { CoinList, type Row } from './components/CoinList'
 import { DetailCard } from './components/DetailCard'
 import { Timeline } from './components/Timeline'
-import { MAX_DAY, coins, dateAt, pctAt } from './lib/data'
+import { DEFAULT_COHORT, MAX_DAY, cohorts, dateAt, isTradingAt, relPct } from './lib/data'
 import { formatDate, formatPct } from './lib/format'
 
 const PLAY_MS = 24_000
 
 export default function App() {
+  const [cohortIndex, setCohortIndex] = useState(DEFAULT_COHORT)
+  const cohort = cohorts[cohortIndex]
+  const baseDay = cohort.day
+
   const [day, setDay] = useState(MAX_DAY)
   const [playing, setPlaying] = useState(false)
-  const [hovered, setHovered] = useState<string | null>(null)
-  const [pinned, setPinned] = useState<string | null>(null)
+  const [hovered, setHovered] = useState<number | null>(null)
+  const [pinned, setPinned] = useState<number | null>(null)
   const [query, setQuery] = useState('')
-  const [hideDelisted, setHideDelisted] = useState(false)
+  const [hideUntracked, setHideUntracked] = useState(false)
 
   const dayRef = useRef(day)
 
@@ -23,12 +27,18 @@ export default function App() {
   }, [day])
 
   useEffect(() => {
+    document.title = `BTC Reign — Top 100 cryptocurrencies of ${cohort.year} vs bitcoin`
+  }, [cohort.year])
+
+  useEffect(() => {
     if (!playing) return
     let frame = 0
     let last = performance.now()
     let lastPaint = 0
-    let current = dayRef.current >= MAX_DAY - 2 ? 0 : dayRef.current
-    const speed = MAX_DAY / PLAY_MS
+    let current = dayRef.current >= MAX_DAY - 2 ? baseDay : dayRef.current
+    if (current < baseDay) current = baseDay
+    const span = MAX_DAY - baseDay
+    const speed = span / Math.min(PLAY_MS, Math.max(6000, (span / MAX_DAY) * PLAY_MS))
 
     const tick = (now: number) => {
       const delta = Math.min(80, now - last)
@@ -48,48 +58,57 @@ export default function App() {
 
     frame = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(frame)
-  }, [playing])
+  }, [playing, baseDay])
 
   const rows = useMemo<Row[]>(() => {
-    return coins
-      .map((coin) => ({ coin, value: pctAt(coin, day) }))
+    const all = cohort.coins.map((coin) => {
+      const active = isTradingAt(coin, baseDay)
+      const value = relPct(coin, active ? day : coin.until, baseDay)
+      return { coin, value, active }
+    })
+    const live = all
+      .filter((row) => row.active)
       .sort((a, b) => b.value - a.value)
       .map((row, index) => ({ ...row, rank: index + 1 }))
-  }, [day])
+    const retired = all
+      .filter((row) => !row.active)
+      .sort((a, b) => b.value - a.value)
+      .map((row) => ({ ...row, rank: 0 }))
+    return [...live, ...retired]
+  }, [cohort, day, baseDay])
 
+  const liveCount = rows.filter((row) => row.active).length
   const needle = query.trim().toLowerCase()
 
   const filtered = useMemo(() => {
     return rows.filter((row) => {
-      if (hideDelisted && row.coin.dagger) return false
+      if (hideUntracked && !row.active) return false
       if (!needle) return true
       return (
         row.coin.name.toLowerCase().includes(needle) ||
         row.coin.symbol.toLowerCase().includes(needle)
       )
     })
-  }, [rows, needle, hideDelisted])
+  }, [rows, needle, hideUntracked])
 
   const dimmed = useMemo(() => {
     if (!needle) return null
-    const set = new Set<string>()
-    for (const coin of coins) {
+    const set = new Set<number>()
+    for (const coin of cohort.coins) {
       if (
         !coin.name.toLowerCase().includes(needle) &&
         !coin.symbol.toLowerCase().includes(needle)
       ) {
-        set.add(coin.symbol)
+        set.add(coin.id)
       }
     }
     return set
-  }, [needle])
+  }, [needle, cohort])
 
-  const selected = pinned ? coins.find((coin) => coin.symbol === pinned) ?? null : null
-  const selectedRank = selected
-    ? rows.find((row) => row.coin.symbol === selected.symbol)?.rank ?? 0
-    : 0
+  const selectedRow = pinned !== null ? rows.find((row) => row.coin.id === pinned) ?? null : null
+  const selected = selectedRow?.coin ?? null
 
-  const alts = rows.filter((row) => row.coin.symbol !== 'BTC')
+  const alts = rows.filter((row) => row.active && row.coin.symbol !== 'BTC')
   const above = alts.filter((row) => row.value > 0).length
   const ascending = [...alts].sort((a, b) => a.value - b.value)
   const median = ascending.length ? ascending[Math.floor(ascending.length / 2)].value : 0
@@ -97,11 +116,19 @@ export default function App() {
 
   const seek = (value: number) => {
     setPlaying(false)
-    setDay(value)
+    setDay(Math.min(MAX_DAY, Math.max(baseDay, value)))
   }
 
-  const pin = (symbol: string | null) => {
-    setPinned((current) => (symbol && current !== symbol ? symbol : null))
+  const pin = (id: number | null) => {
+    setPinned((current) => (id !== null && current !== id ? id : null))
+  }
+
+  const chooseCohort = (index: number) => {
+    setPlaying(false)
+    setCohortIndex(index)
+    setPinned(null)
+    setHovered(null)
+    setDay(MAX_DAY)
   }
 
   return (
@@ -117,20 +144,21 @@ export default function App() {
         </div>
 
         <h1>
-          Top 100 cryptocurrencies of 2017 <span className="vs">vs</span> bitcoin
+          Top 100 cryptocurrencies of {cohort.year} <span className="vs">vs</span> bitcoin
         </h1>
 
         <p className="lede">
-          Every coin in the top 100 by market cap on 18 June 2017, priced in bitcoin instead of
-          dollars. Drag the timeline to watch the field fall away.
+          Every coin in the top 100 by market cap on 18 June {cohort.year}, priced in bitcoin
+          instead of dollars. Drag the timeline to watch the field fall away, or pick another year
+          to load that snapshot's coins.
         </p>
 
         <div className="stats">
           <div className="stat">
-            <span className="stat-label">Altcoins beating bitcoin</span>
+            <span className="stat-label">Altcoins beating bitcoin since {cohort.label}</span>
             <span className="stat-value">
               {above}
-              <em> / 99</em>
+              <em> / {alts.length}</em>
             </span>
           </div>
           <div className="stat">
@@ -150,17 +178,42 @@ export default function App() {
       </header>
 
       <main className="workspace">
-        <section className="chart-panel" aria-label="Chart of the top 100 coins of 2017 against bitcoin">
+        <section
+          className="chart-panel"
+          aria-label={`Chart of the top 100 coins of June ${cohort.year} against bitcoin`}
+        >
           <div className="chart-head">
             <div>
-              <div className="chart-label">Performance vs bitcoin</div>
+              <div className="chart-label">
+                Performance vs bitcoin
+                <span className="chart-since"> · since {cohort.label}</span>
+              </div>
               <div className="chart-date">As of {formatDate(dateAt(day))}</div>
             </div>
-            <div className="chart-hint">Hover to inspect · drag to scrub · click to pin</div>
+            <div className="chart-tools">
+              <label className="start-select">
+                <span>Snapshot</span>
+                <select
+                  value={cohortIndex}
+                  onChange={(event) => chooseCohort(Number(event.target.value))}
+                  aria-label="Snapshot year"
+                >
+                  {cohorts.map((option, index) => (
+                    <option key={option.year} value={index}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <span className="chart-hint">Hover · drag · click to pin</span>
+            </div>
           </div>
 
           <Chart
+            coins={cohort.coins}
             day={day}
+            baseDay={baseDay}
+            baseLabel={cohort.label}
             onDay={seek}
             hovered={hovered}
             onHover={setHovered}
@@ -171,6 +224,7 @@ export default function App() {
 
           <Timeline
             day={day}
+            baseDay={baseDay}
             maxDay={MAX_DAY}
             playing={playing}
             onDay={seek}
@@ -180,7 +234,15 @@ export default function App() {
 
         <aside className="sidebar">
           {selected && (
-            <DetailCard coin={selected} day={day} rank={selectedRank} onClose={() => setPinned(null)} />
+            <DetailCard
+              coin={selected}
+              day={day}
+              baseDay={baseDay}
+              cohortLabel={cohort.label}
+              rank={selectedRow?.rank ?? 0}
+              active={selectedRow?.active ?? false}
+              onClose={() => setPinned(null)}
+            />
           )}
 
           <div className="list-card">
@@ -188,7 +250,8 @@ export default function App() {
               <div className="list-title">
                 <h2>Ranking</h2>
                 <span>
-                  {filtered.length} of {rows.length}
+                  {liveCount} tracked
+                  {liveCount < rows.length ? ` · ${rows.length - liveCount} untracked` : ''}
                 </span>
               </div>
 
@@ -210,10 +273,10 @@ export default function App() {
                 <label className="switch">
                   <input
                     type="checkbox"
-                    checked={hideDelisted}
-                    onChange={(event) => setHideDelisted(event.target.checked)}
+                    checked={hideUntracked}
+                    onChange={(event) => setHideUntracked(event.target.checked)}
                   />
-                  <span>Active only</span>
+                  <span>Tracked only</span>
                 </label>
               </div>
             </div>
@@ -231,11 +294,11 @@ export default function App() {
 
       <footer className="footer">
         <p>
-          <b>Method.</b> Prices from{' '}
-          <a href="https://coinmarketcap.com/historical/20170618/" target="_blank" rel="noreferrer">
-            CoinMarketCap's 18 June 2017 snapshot
+          <b>Method.</b> Top 100 by market cap on 18 June of the selected year, from{' '}
+          <a href="https://coinmarketcap.com/historical/" target="_blank" rel="noreferrer">
+            CoinMarketCap's historical snapshots
           </a>
-          , converted to bitcoin at that day's close. Historical series from{' '}
+          , converted to bitcoin at that day's close. Prices from{' '}
           <a href="https://coinmarketcap.com/" target="_blank" rel="noreferrer">
             CoinMarketCap
           </a>{' '}
@@ -243,8 +306,8 @@ export default function App() {
           <a href="https://coincodex.com/" target="_blank" rel="noreferrer">
             CoinCodex
           </a>
-          . † Coins CoinMarketCap no longer tracks are frozen at their last recorded value. Data
-          through {formatDate(dateAt(MAX_DAY))}.
+          . † Coins no longer tracked are frozen at their last recorded value. Data through{' '}
+          {formatDate(dateAt(MAX_DAY))}.
         </p>
         <p className="credit">
           Inspired by{' '}

@@ -1,17 +1,19 @@
 import { memo, useMemo, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import {
+  DAY_MS,
   MAX_DAY,
   START,
   STEP,
-  coins,
   dateAt,
-  dayOf,
+  hasStopped,
+  isTradingAt,
   priceBtcAt,
+  relPct,
   valueAt,
   type CoinView,
 } from '../lib/data'
-import { formatBtc, formatDate, formatPct } from '../lib/format'
+import { formatBtc, formatDate, formatMonthYear, formatPct } from '../lib/format'
 import { POS_SPAN, Y_TICKS, yNorm } from '../lib/scales'
 import { useElementSize } from '../lib/useElementSize'
 
@@ -20,16 +22,21 @@ type Path = { coin: CoinView; d: string }
 type Probe = { x: number; y: number; day: number; symbol: string | null }
 
 type Props = {
+  coins: CoinView[]
   day: number
+  baseDay: number
+  baseLabel: string
   onDay: (day: number) => void
-  hovered: string | null
-  onHover: (symbol: string | null) => void
-  pinned: string | null
-  onPin: (symbol: string | null) => void
-  dimmed: Set<string> | null
+  hovered: number | null
+  onHover: (id: number | null) => void
+  pinned: number | null
+  onPin: (id: number | null) => void
+  dimmed: Set<number> | null
 }
 
 const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n))
+
+const monthShort = new Intl.DateTimeFormat('en-GB', { month: 'short', timeZone: 'UTC' })
 
 const LineLayer = memo(function LineLayer({
   paths,
@@ -38,19 +45,20 @@ const LineLayer = memo(function LineLayer({
   clipId,
 }: {
   paths: Path[]
-  hovered: string | null
-  dimmed: Set<string> | null
+  hovered: number | null
+  dimmed: Set<number> | null
   clipId: string
 }) {
   return (
     <g clipPath={`url(#${clipId})`}>
       {paths.map(({ coin, d }) => {
-        const isHovered = coin.symbol === hovered
-        const isDimmed = dimmed?.has(coin.symbol)
-        const opacity = isDimmed ? 0.045 : isHovered ? 0.12 : coin.dagger ? 0.34 : 0.58
+        const isHovered = coin.id === hovered
+        const isDimmed = dimmed?.has(coin.id)
+        const faded = hasStopped(coin)
+        const opacity = isDimmed ? 0.045 : isHovered ? 0.12 : faded ? 0.34 : 0.58
         return (
           <path
-            key={coin.symbol}
+            key={coin.id}
             d={d}
             fill="none"
             stroke={coin.color}
@@ -70,7 +78,7 @@ const GhostLayer = memo(function GhostLayer({ paths }: { paths: Path[] }) {
     <g>
       {paths.map(({ coin, d }) => (
         <path
-          key={coin.symbol}
+          key={coin.id}
           d={d}
           fill="none"
           stroke={coin.color}
@@ -84,10 +92,21 @@ const GhostLayer = memo(function GhostLayer({ paths }: { paths: Path[] }) {
   )
 })
 
-export function Chart({ day, onDay, hovered, onHover, pinned, onPin, dimmed }: Props) {
+export function Chart({
+  coins,
+  day,
+  baseDay,
+  baseLabel,
+  onDay,
+  hovered,
+  onHover,
+  pinned,
+  onPin,
+  dimmed,
+}: Props) {
   const [wrapRef, size] = useElementSize<HTMLDivElement>()
   const [probe, setProbe] = useState<Probe | null>(null)
-  const drag = useRef<{ x: number; moved: boolean; symbol: string | null } | null>(null)
+  const drag = useRef<{ x: number; moved: boolean; id: number | null } | null>(null)
   const revealId = 'chart-reveal'
 
   const { width, height } = size
@@ -100,51 +119,77 @@ export function Chart({ day, onDay, hovered, onHover, pinned, onPin, dimmed }: P
   }
   const iw = Math.max(0, width - margin.left - margin.right)
   const ih = Math.max(0, height - margin.top - margin.bottom)
+  const span = Math.max(1, MAX_DAY - baseDay)
 
-  const xOfDay = (d: number) => margin.left + (d / MAX_DAY) * iw
+  const xOfDay = (d: number) => margin.left + ((d - baseDay) / span) * iw
   const yOfPct = (pct: number) =>
     margin.top + ((POS_SPAN - yNorm(pct)) / (POS_SPAN + 1)) * ih
 
+  const visible = useMemo(
+    () => coins.filter((coin) => isTradingAt(coin, baseDay)),
+    [coins, baseDay],
+  )
+
   const paths = useMemo<Path[]>(() => {
     if (!iw || !ih) return []
-    return coins.map((coin) => {
+    return visible.map((coin) => {
+      const base = valueAt(coin, baseDay)
+      const first = Math.max(0, Math.floor((baseDay - coin.from) / STEP) - 1)
       const parts: string[] = []
-      for (let i = 0; i < coin.vals.length; i++) {
-        const x = margin.left + ((i * STEP) / MAX_DAY) * iw
-        const y = margin.top + ((POS_SPAN - yNorm(coin.vals[i] - 1)) / (POS_SPAN + 1)) * ih
-        parts.push(`${i === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`)
+      for (let i = first; i < coin.vals.length; i++) {
+        const day = coin.from + i * STEP
+        const x = margin.left + ((day - baseDay) / span) * iw
+        const y =
+          margin.top + ((POS_SPAN - yNorm(coin.vals[i] / base - 1)) / (POS_SPAN + 1)) * ih
+        parts.push(`${parts.length === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`)
       }
       return { coin, d: parts.join('') }
     })
-  }, [iw, ih, margin.left, margin.top])
+  }, [iw, ih, margin.left, margin.top, baseDay, span, visible])
 
   const ticks = useMemo(() => {
     if (!iw) return []
-    const years =
-      iw < 480
-        ? [2017, 2020, 2023, 2026]
-        : iw < 760
-          ? [2017, 2019, 2021, 2023, 2026]
-          : [2017, 2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026]
-    return years
-      .map((year) => {
-        const date = year === 2017 ? START : new Date(Date.UTC(year, 5, 1))
-        return { year, day: dayOf(date) }
-      })
-      .filter((t) => t.day >= 0 && t.day <= MAX_DAY)
-  }, [iw])
+    const out = [{ key: 'start', day: baseDay, label: baseLabel }]
+
+    // Short windows read better with month ticks than with year ticks.
+    if (span < 500) {
+      const stepMonths = span < 150 ? 1 : span < 300 ? 2 : 3
+      const cursor = dateAt(baseDay)
+      for (let i = 1; i < 40; i++) {
+        const date = new Date(
+          Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth() + i * stepMonths, 1),
+        )
+        const day = Math.round((date.getTime() - START.getTime()) / DAY_MS)
+        if (day > MAX_DAY - 8) break
+        out.push({ key: `${date.getUTCFullYear()}-${date.getUTCMonth()}`, day, label: monthShort.format(date) })
+      }
+      return out
+    }
+
+    const baseYear = Number(baseLabel.split(' ').pop())
+    const every = iw < 480 ? 3 : iw < 760 ? 2 : 1
+    for (let year = baseYear + 1; year <= 2100; year++) {
+      const day = Math.round((Date.UTC(year, 0, 1) - START.getTime()) / DAY_MS)
+      if (day > MAX_DAY) break
+      if (day - baseDay < 90) continue
+      if ((year - baseYear) % every !== 0) continue
+      out.push({ key: String(year), day, label: String(year) })
+    }
+    return out
+  }, [iw, baseDay, baseLabel, span])
 
   const highlight =
-    (pinned && coins.find((coin) => coin.symbol === pinned)) ||
-    (hovered && coins.find((coin) => coin.symbol === hovered)) ||
+    (pinned !== null && visible.find((coin) => coin.id === pinned)) ||
+    (hovered !== null && visible.find((coin) => coin.id === hovered)) ||
     null
 
-  const highlightPath = highlight ? paths.find((p) => p.coin.symbol === highlight.symbol) : null
-  const cursorX = xOfDay(day)
-  const tipCoin = probe?.symbol ? coins.find((coin) => coin.symbol === probe.symbol) ?? null : null
+  const highlightPath = highlight ? paths.find((p) => p.coin.id === highlight.id) : null
+  const cursorDay = clamp(day, baseDay, MAX_DAY)
+  const cursorX = xOfDay(cursorDay)
+  const tipCoin = probe?.symbol ? visible.find((coin) => coin.symbol === probe.symbol) ?? null : null
 
   function dayFromX(x: number) {
-    return clamp(((x - margin.left) / iw) * MAX_DAY, 0, MAX_DAY)
+    return clamp(baseDay + ((x - margin.left) / iw) * span, baseDay, MAX_DAY)
   }
 
   function probeAt(event: ReactPointerEvent<SVGSVGElement>) {
@@ -156,9 +201,9 @@ export function Chart({ day, onDay, hovered, onHover, pinned, onPin, dimmed }: P
 
     let best: CoinView | null = null
     let bestDistance = narrow ? 18 : 24
-    for (const coin of coins) {
-      if (dimmed?.has(coin.symbol)) continue
-      const distance = Math.abs(yOfPct(valueAt(coin, hoverDay) - 1) - y)
+    for (const coin of visible) {
+      if (dimmed?.has(coin.id)) continue
+      const distance = Math.abs(yOfPct(relPct(coin, hoverDay, baseDay)) - y)
       if (distance < bestDistance) {
         bestDistance = distance
         best = coin
@@ -167,8 +212,8 @@ export function Chart({ day, onDay, hovered, onHover, pinned, onPin, dimmed }: P
 
     const next = { x, y, day: hoverDay, symbol: best?.symbol ?? null }
     setProbe(next)
-    onHover(next.symbol)
-    return next
+    onHover(best?.id ?? null)
+    return { ...next, id: best?.id ?? null }
   }
 
   function handleMove(event: ReactPointerEvent<SVGSVGElement>) {
@@ -188,12 +233,12 @@ export function Chart({ day, onDay, hovered, onHover, pinned, onPin, dimmed }: P
   function handleDown(event: ReactPointerEvent<SVGSVGElement>) {
     event.currentTarget.setPointerCapture(event.pointerId)
     const next = probeAt(event)
-    drag.current = { x: event.clientX, moved: false, symbol: next?.symbol ?? null }
+    drag.current = { x: event.clientX, moved: false, id: next?.id ?? null }
   }
 
   function handleUp(event: ReactPointerEvent<SVGSVGElement>) {
     if (drag.current && !drag.current.moved) {
-      onPin(drag.current.symbol)
+      onPin(drag.current.id)
     }
     drag.current = null
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
@@ -219,7 +264,7 @@ export function Chart({ day, onDay, hovered, onHover, pinned, onPin, dimmed }: P
           height={height}
           viewBox={`0 0 ${width} ${height}`}
           role="img"
-          aria-label="Line chart of the top 100 cryptocurrencies of June 2017, measured against bitcoin"
+          aria-label={`Line chart of the top 100 cryptocurrencies of ${baseLabel}, measured against bitcoin`}
           onPointerMove={handleMove}
           onPointerLeave={handleLeave}
           onPointerDown={handleDown}
@@ -284,15 +329,15 @@ export function Chart({ day, onDay, hovered, onHover, pinned, onPin, dimmed }: P
             strokeOpacity={0.14}
           />
 
-          {ticks.map((tick) => (
+          {ticks.map((tick, index) => (
             <text
-              key={tick.year}
+              key={tick.key}
               x={xOfDay(tick.day)}
               y={margin.top + ih + (narrow ? 15 : 18)}
-              textAnchor={tick.year === 2017 ? 'start' : 'middle'}
+              textAnchor={index === 0 ? 'start' : 'middle'}
               className="axis-label"
             >
-              Jun {tick.year}
+              {tick.label}
             </text>
           ))}
 
@@ -334,7 +379,7 @@ export function Chart({ day, onDay, hovered, onHover, pinned, onPin, dimmed }: P
             {highlight && (
               <circle
                 cx={cursorX}
-                cy={yOfPct(valueAt(highlight, day) - 1)}
+                cy={yOfPct(relPct(highlight, cursorDay, baseDay))}
                 r={4.2}
                 fill={highlight.color}
                 stroke="#fffdf8"
@@ -345,13 +390,30 @@ export function Chart({ day, onDay, hovered, onHover, pinned, onPin, dimmed }: P
             {probe && tipCoin && (
               <circle
                 cx={probe.x}
-                cy={yOfPct(valueAt(tipCoin, probe.day) - 1)}
+                cy={yOfPct(relPct(tipCoin, probe.day, baseDay))}
                 r={3.2}
                 fill={tipCoin.color}
                 stroke="#fffdf8"
                 strokeWidth={1.5}
               />
             )}
+
+            <g clipPath={`url(#${revealId})`}>
+              {visible.map((coin) =>
+                hasStopped(coin) ? (
+                  <circle
+                    key={`end-${coin.id}`}
+                    cx={xOfDay(coin.until)}
+                    cy={yOfPct(relPct(coin, coin.until, baseDay))}
+                    r={1.9}
+                    fill="#fffdf8"
+                    stroke={coin.color}
+                    strokeWidth={1}
+                    strokeOpacity={0.75}
+                  />
+                ) : null,
+              )}
+            </g>
           </g>
 
           <line
@@ -375,7 +437,6 @@ export function Chart({ day, onDay, hovered, onHover, pinned, onPin, dimmed }: P
               strokeOpacity={0.16}
             />
           )}
-
         </svg>
       )}
 
@@ -389,12 +450,12 @@ export function Chart({ day, onDay, hovered, onHover, pinned, onPin, dimmed }: P
                 <span className="tip-label">{tipCoin.name}</span>
                 <span className="tip-symbol">{tipCoin.symbol}</span>
               </div>
-              <div className="tip-value">
-                {formatPct(valueAt(tipCoin, probe.day) - 1)}
-              </div>
+              <div className="tip-value">{formatPct(relPct(tipCoin, probe.day, baseDay))}</div>
               <div className="tip-meta">
-                {formatBtc(priceBtcAt(tipCoin, probe.day))} BTC
-                {tipCoin.dagger ? ' · delisted' : ''}
+                {formatBtc(priceBtcAt(tipCoin, probe.day, baseDay))} BTC
+                {probe.day > tipCoin.until
+                  ? ` · stopped ${formatMonthYear(dateAt(tipCoin.until))}`
+                  : ''}
               </div>
             </>
           ) : (

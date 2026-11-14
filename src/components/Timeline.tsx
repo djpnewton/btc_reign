@@ -3,14 +3,16 @@ import { dateAt } from '../lib/data'
 
 type Props = {
   day: number
+  baseDay: number
   maxDay: number
   playing: boolean
   onDay: (day: number) => void
   onTogglePlay: () => void
 }
 
-export function Timeline({ day, maxDay, playing, onDay, onTogglePlay }: Props) {
-  const progress = maxDay > 0 ? (day / maxDay) * 100 : 0
+export function Timeline({ day, baseDay, maxDay, playing, onDay, onTogglePlay }: Props) {
+  const span = Math.max(1, maxDay - baseDay)
+  const progress = Math.min(100, Math.max(0, ((day - baseDay) / span) * 100))
 
   return (
     <div className="timeline">
@@ -35,16 +37,16 @@ export function Timeline({ day, maxDay, playing, onDay, onTogglePlay }: Props) {
       <div className="track">
         <input
           type="range"
-          min={0}
+          min={baseDay}
           max={maxDay}
           step={0.5}
-          value={day}
+          value={Math.min(Math.max(day, baseDay), maxDay)}
           onChange={(event) => onDay(Number(event.target.value))}
           aria-label="Timeline date"
           style={{ ['--progress' as string]: `${progress}%` }}
         />
         <div className="track-labels" aria-hidden="true">
-          <span>{formatMonthYear(dateAt(0))}</span>
+          <span>{formatMonthYear(dateAt(baseDay))}</span>
           <span>{formatMonthYear(dateAt(maxDay))}</span>
         </div>
       </div>

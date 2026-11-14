@@ -26,6 +26,21 @@ npm run build
 npm run preview
 ```
 
+## Deploying
+
+Every push to `main` lints, builds and publishes to GitHub Pages via
+[.github/workflows/deploy.yml](./.github/workflows/deploy.yml).
+
+The site is served at **https://btcreign.macrodash.me**. The domain lives in
+[public/CNAME](./public/CNAME), which Vite copies into `dist/` on every build, so the custom
+domain survives each deployment.
+
+One-time setup:
+
+1. **Settings → Pages → Build and deployment → Source: GitHub Actions.**
+2. Add a DNS record for the subdomain: `CNAME btcreign → djpnewton.github.io`.
+3. Once the first deploy finishes, tick **Enforce HTTPS** in the same settings page.
+
 ## Data
 
 `src/data/coins.json` holds ten snapshots (18 June, 2017–2026) and the BTC-denominated history for every coin that has ever been in one of them — 391 coins, ~2 MB.

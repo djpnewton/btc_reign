@@ -334,15 +334,33 @@ h1 .vs {
 
 .chart-wrap {
   position: relative;
+  touch-action: pan-y;
+  cursor: crosshair;
+  user-select: none;
   width: 100%;
   height: clamp(380px, calc(100vh - 430px), 720px);
 }
 
-.chart {
+/* Four stacked layers: grid labels, ghost paths, crisp paths, hover overlay.
+   Hovering only repaints the overlay. The paths are canvases because Gecko
+   re-rasterises SVG content on every paint, while a canvas is just a blit. */
+.chart-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
   display: block;
-  touch-action: pan-y;
-  cursor: crosshair;
-  user-select: none;
+  pointer-events: none;
+}
+
+.chart-ghost,
+.chart-crisp,
+.chart-reveal {
+  will-change: transform;
+}
+
+.chart-reveal {
+  overflow: hidden;
+  will-change: transform, clip-path;
 }
 
 .axis-label {

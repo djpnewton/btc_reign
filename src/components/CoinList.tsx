@@ -6,6 +6,61 @@ export type Row = { coin: CoinView; value: number; rank: number; active: boolean
 
 const ROW_HEIGHT = 26
 
+type RowProps = {
+  coin: CoinView
+  value: number
+  rank: number
+  active: boolean
+  index: number
+  hovered: boolean
+  pinned: boolean
+  onHover: (id: number | null) => void
+  onPin: (id: number) => void
+}
+
+const CoinRow = memo(function CoinRow({
+  coin,
+  value,
+  rank,
+  active,
+  index,
+  hovered,
+  pinned,
+  onHover,
+  onPin,
+}: RowProps) {
+  const retired = hasStopped(coin)
+  return (
+    <button
+      type="button"
+      data-id={coin.id}
+      className={`row${retired ? ' is-dagger' : ''}${hovered ? ' is-hovered' : ''}${
+        active ? '' : ' is-inactive'
+      }`}
+      style={{ transform: `translateY(${index * ROW_HEIGHT}px)`, height: ROW_HEIGHT }}
+      aria-pressed={pinned}
+      title={`${coin.name} (${coin.symbol})`}
+      onMouseEnter={() => onHover(coin.id)}
+      onMouseLeave={() => onHover(null)}
+      onFocus={() => onHover(coin.id)}
+      onBlur={() => onHover(null)}
+      onClick={() => onPin(coin.id)}
+    >
+      <span className="row-rank">{active ? rank : '—'}</span>
+      <span className="row-swatch" style={{ background: coin.color }} />
+      <span className="row-name" style={{ color: coin.ink }}>
+        {coin.name}
+        {coin.note ? <em> ({coin.note})</em> : null}
+        {retired ? <span className="row-dagger">†</span> : null}
+        <span className="row-symbol">{coin.symbol}</span>
+      </span>
+      <span className="row-value" style={{ color: coin.ink }}>
+        {active ? formatPct(value) : 'untracked'}
+      </span>
+    </button>
+  )
+})
+
 type Props = {
   rows: Row[]
   pinned: number | null
@@ -40,43 +95,20 @@ export const CoinList = memo(function CoinList({ rows, pinned, hovered, onHover,
   return (
     <div className="coin-list" ref={scrollRef}>
       <div className="coin-list-inner" style={{ height: rows.length * ROW_HEIGHT }}>
-        {rows.map((row, index) => {
-          const { coin, active } = row
-          const retired = hasStopped(coin)
-          return (
-            <button
-              key={coin.id}
-              type="button"
-              data-id={coin.id}
-              className={`row${retired ? ' is-dagger' : ''}${
-                hovered === coin.id ? ' is-hovered' : ''
-              }${active ? '' : ' is-inactive'}`}
-              style={{
-                transform: `translateY(${index * ROW_HEIGHT}px)`,
-                height: ROW_HEIGHT,
-              }}
-              aria-pressed={pinned === coin.id}
-              title={`${coin.name} (${coin.symbol})`}
-              onMouseEnter={() => onHover(coin.id)}
-              onMouseLeave={() => onHover(null)}
-              onFocus={() => onHover(coin.id)}
-              onBlur={() => onHover(null)}
-              onClick={() => onPin(coin.id)}
-            >
-              <span className="row-rank">{active ? row.rank : '—'}</span>
-              <span className="row-swatch" style={{ background: coin.color }} />
-              <span className="row-name" style={{ color: coin.ink }}>
-                {coin.name}
-                {coin.note ? <em> ({coin.note})</em> : null}
-                {retired ? <span className="row-dagger">†</span> : null}
-                <span className="row-symbol">{coin.symbol}</span>
-              </span>
-              <span className="row-value" style={{ color: coin.ink }}>
-                {active ? formatPct(row.value) : 'untracked'}
-              </span>
-            </button>
-          )
-        })}
+        {rows.map((row, index) => (
+          <CoinRow
+            key={row.coin.id}
+            coin={row.coin}
+            value={row.value}
+            rank={row.rank}
+            active={row.active}
+            index={index}
+            hovered={hovered === row.coin.id}
+            pinned={pinned === row.coin.id}
+            onHover={onHover}
+            onPin={onPin}
+          />
+        ))}
       </div>
     </div>
   )

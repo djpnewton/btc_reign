@@ -49,7 +49,16 @@ The page paints before any chart data is parsed: the shell is ~77 kB gzipped Jav
 - `src/data/coins.json` is the payload: ~1 MB raw, ~360 kB gzipped.
 - Series are stored as first differences of `log10(value)` at 1e-4 resolution, which roughly halves the payload; the client expands them with a running sum.
 - Only the Latin subset of Inter ships (48 kB); no other scripts are downloaded.
-- The ranking list updates at 10 Hz while the chart scrubs at 60 Hz, so a 100-row reshuffle never blocks a frame.
+- The chart is four stacked layers: an SVG grid, a ghost canvas, a crisp canvas, and a small SVG
+  hover overlay. The 100 paths live in `<canvas>` because Gecko re-rasterises SVG content on every
+  paint — a canvas is a retained bitmap, so hovering is a blit rather than a redraw of 86k points
+  (Firefox hover went from 18 to 60 fps; Chromium likewise sits at 60).
+- The reveal (crisp lines up to the cursor, ghosts beyond) is a CSS `clip-path` on the crisp canvas,
+  so scrubbing never redraws the paths either.
+- Pointer moves are coalesced into one probe update per animation frame, and rows are memoised
+  individually, so a hover only re-renders the two rows whose highlight changed.
+- The ranking list updates at 10 Hz while the chart scrubs at 60 Hz, so a 100-row reshuffle never
+  blocks a frame.
 
 ## Data
 

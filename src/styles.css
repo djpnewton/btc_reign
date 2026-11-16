@@ -1,3 +1,13 @@
+@font-face {
+  font-family: 'Inter Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('./fonts/inter-latin-wght.woff2') format('woff2-variations');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 :root {
   --paper: #f4f1e9;
   --surface: #fffdf8;
@@ -285,6 +295,41 @@ h1 .vs {
   letter-spacing: -0.01em;
   color: var(--ink);
   cursor: pointer;
+}
+
+.chart-wrap.skeleton,
+.list-card.list-skeleton {
+  background: linear-gradient(
+    100deg,
+    rgba(226, 219, 203, 0.35) 20%,
+    rgba(226, 219, 203, 0.62) 42%,
+    rgba(226, 219, 203, 0.35) 64%
+  );
+  background-size: 220% 100%;
+  animation: shimmer 1.5s linear infinite;
+  border-radius: 3px;
+}
+
+.list-card.list-skeleton {
+  flex: 1;
+  min-height: 420px;
+}
+
+.splash .sidebar {
+  min-height: 420px;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 160% 0;
+  }
+  to {
+    background-position: -60% 0;
+  }
+}
+
+.chart-date.blank {
+  opacity: 0;
 }
 
 .chart-wrap {

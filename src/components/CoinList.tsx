@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { memo, useEffect, useRef } from 'react'
 import { hasStopped, type CoinView } from '../lib/data'
 import { formatPct } from '../lib/format'
 
@@ -14,7 +14,7 @@ type Props = {
   onPin: (id: number) => void
 }
 
-export function CoinList({ rows, pinned, hovered, onHover, onPin }: Props) {
+export const CoinList = memo(function CoinList({ rows, pinned, hovered, onHover, onPin }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -80,4 +80,4 @@ export function CoinList({ rows, pinned, hovered, onHover, onPin }: Props) {
       </div>
     </div>
   )
-}
+})

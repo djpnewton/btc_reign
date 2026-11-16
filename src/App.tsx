@@ -1,15 +1,66 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Chart } from './components/Chart'
 import { CoinList, type Row } from './components/CoinList'
 import { DetailCard } from './components/DetailCard'
 import { Timeline } from './components/Timeline'
-import { DEFAULT_COHORT, MAX_DAY, cohorts, dateAt, isTradingAt, relPct } from './lib/data'
+import {
+  MAX_DAY,
+  cohorts,
+  dateAt,
+  isTradingAt,
+  loadCohorts,
+  relPct,
+} from './lib/data'
 import { formatDate, formatPct } from './lib/format'
+import { useThrottledValue } from './lib/useThrottledValue'
 
 const PLAY_MS = 24_000
 
-export default function App() {
-  const [cohortIndex, setCohortIndex] = useState(DEFAULT_COHORT)
+function Splash({ failed }: { failed: boolean }) {
+  return (
+    <div className="page splash">
+      <header className="masthead">
+        <div className="eyebrow">
+          <span className="brand">
+            <i aria-hidden="true" /> BTC Reign
+          </span>
+          <span className="rule" aria-hidden="true" />
+          <span>An interactive chart</span>
+          <span className="eyebrow-right">Measured in bitcoin</span>
+        </div>
+
+        <h1>
+          Top 100 cryptocurrencies of 2017 <span className="vs">vs</span> bitcoin
+        </h1>
+
+        <p className="lede">
+          {failed
+            ? 'The chart data could not be loaded. Check your connection and reload the page.'
+            : 'Loading ten years of market snapshots…'}
+        </p>
+      </header>
+
+      <main className="workspace" aria-busy={!failed}>
+        <section className="chart-panel">
+          <div className="chart-head">
+            <div>
+              <div className="chart-label">Performance vs bitcoin</div>
+              <div className="chart-date blank">&nbsp;</div>
+            </div>
+          </div>
+          <div className="chart-wrap skeleton" />
+        </section>
+
+        <aside className="sidebar">
+          <div className="list-card skeleton list-skeleton" />
+        </aside>
+      </main>
+    </div>
+  )
+}
+
+function Workspace() {
+  const [cohortIndex, setCohortIndex] = useState(0)
   const cohort = cohorts[cohortIndex]
   const baseDay = cohort.day
 
@@ -19,6 +70,9 @@ export default function App() {
   const [pinned, setPinned] = useState<number | null>(null)
   const [query, setQuery] = useState('')
   const [hideUntracked, setHideUntracked] = useState(false)
+
+  // The ranking trails the chart slightly while scrubbing or playing.
+  const listDay = useThrottledValue(day, 100)
 
   const dayRef = useRef(day)
 
@@ -63,7 +117,7 @@ export default function App() {
   const rows = useMemo<Row[]>(() => {
     const all = cohort.coins.map((coin) => {
       const active = isTradingAt(coin, baseDay)
-      const value = relPct(coin, active ? day : coin.until, baseDay)
+      const value = relPct(coin, active ? listDay : coin.until, baseDay)
       return { coin, value, active }
     })
     const live = all
@@ -75,9 +129,9 @@ export default function App() {
       .sort((a, b) => b.value - a.value)
       .map((row) => ({ ...row, rank: 0 }))
     return [...live, ...retired]
-  }, [cohort, day, baseDay])
+  }, [cohort, listDay, baseDay])
 
-  const liveCount = rows.filter((row) => row.active).length
+  const liveCount = useMemo(() => rows.filter((row) => row.active).length, [rows])
   const needle = query.trim().toLowerCase()
 
   const filtered = useMemo(() => {
@@ -108,28 +162,33 @@ export default function App() {
   const selectedRow = pinned !== null ? rows.find((row) => row.coin.id === pinned) ?? null : null
   const selected = selectedRow?.coin ?? null
 
-  const alts = rows.filter((row) => row.active && row.coin.symbol !== 'BTC')
+  const alts = useMemo(() => rows.filter((row) => row.active && row.coin.symbol !== 'BTC'), [rows])
   const above = alts.filter((row) => row.value > 0).length
   const ascending = [...alts].sort((a, b) => a.value - b.value)
   const median = ascending.length ? ascending[Math.floor(ascending.length / 2)].value : 0
   const best = alts[0]
 
-  const seek = (value: number) => {
-    setPlaying(false)
-    setDay(Math.min(MAX_DAY, Math.max(baseDay, value)))
-  }
+  const seek = useCallback(
+    (value: number) => {
+      setPlaying(false)
+      setDay(Math.min(MAX_DAY, Math.max(baseDay, value)))
+    },
+    [baseDay],
+  )
 
-  const pin = (id: number | null) => {
+  const pin = useCallback((id: number | null) => {
     setPinned((current) => (id !== null && current !== id ? id : null))
-  }
+  }, [])
 
-  const chooseCohort = (index: number) => {
+  const chooseCohort = useCallback((index: number) => {
     setPlaying(false)
     setCohortIndex(index)
     setPinned(null)
     setHovered(null)
     setDay(MAX_DAY)
-  }
+  }, [])
+
+  const togglePlay = useCallback(() => setPlaying((value) => !value), [])
 
   return (
     <div className="page">
@@ -228,7 +287,7 @@ export default function App() {
             maxDay={MAX_DAY}
             playing={playing}
             onDay={seek}
-            onTogglePlay={() => setPlaying((value) => !value)}
+            onTogglePlay={togglePlay}
           />
         </section>
 
@@ -319,4 +378,25 @@ export default function App() {
       </footer>
     </div>
   )
+}
+
+export default function App() {
+  const [status, setStatus] = useState<'loading' | 'ready' | 'failed'>(
+    cohorts.length > 0 ? 'ready' : 'loading',
+  )
+
+  useEffect(() => {
+    if (status !== 'loading') return
+    let alive = true
+    loadCohorts().then(
+      () => alive && setStatus('ready'),
+      () => alive && setStatus('failed'),
+    )
+    return () => {
+      alive = false
+    }
+  }, [status])
+
+  if (status === 'ready') return <Workspace />
+  return <Splash failed={status === 'failed'} />
 }

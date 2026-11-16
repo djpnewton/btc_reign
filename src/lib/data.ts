@@ -1,13 +1,12 @@
-import raw from '../data/coins.json'
+import dataUrl from '../data/coins.json?url'
+import meta from '../data/meta.json'
 import { coinColor, inkColor } from './palette'
-import type { Dataset, RawCoin } from './types'
+import type { Dataset, Meta, RawCoin } from './types'
 
-const dataset = raw as unknown as Dataset
-
-export const START = new Date(`${dataset.start}T00:00:00Z`)
-export const END = new Date(`${dataset.end}T00:00:00Z`)
-export const STEP = dataset.step
-export const MAX_DAY = dataset.days - (dataset.days % dataset.step)
+export const START = new Date(`${(meta as Meta).start}T00:00:00Z`)
+export const END = new Date(`${(meta as Meta).end}T00:00:00Z`)
+export const STEP = (meta as Meta).step
+export const MAX_DAY = (meta as Meta).days - ((meta as Meta).days % STEP)
 export const DAY_MS = 86_400_000
 
 const NOTES: Record<string, string> = {
@@ -39,31 +38,57 @@ function paletteIndex(id: number): number {
   return (Math.imul(id, 2654435761) >>> 0) % 96
 }
 
-const views = new Map<number, Omit<CoinView, 'rank' | 'mcap' | 'priceBtc'>>()
-for (const coin of Object.values(dataset.coins)) {
-  const index = paletteIndex(coin.id)
-  views.set(coin.id, {
-    ...coin,
-    color: coinColor(index),
-    ink: inkColor(index),
-    note: NOTES[coin.symbol],
-  })
+/** Expand the packed series: running sum of log10 deltas. */
+function decodeVals(deltas: number[], scale: number): number[] {
+  if (deltas.length === 0) return []
+  const values = new Array<number>(deltas.length)
+  let acc = 0
+  for (let i = 0; i < deltas.length; i++) {
+    acc += deltas[i]
+    values[i] = 10 ** (acc / scale)
+  }
+  return values
 }
 
-export const cohorts: Cohort[] = dataset.cohorts.map((cohort) => ({
-  year: cohort.year,
-  day: cohort.day,
-  label: `${monthLabel.format(new Date(`${cohort.date}T00:00:00Z`))} ${cohort.year}`,
-  coins: cohort.coins
-    .map((entry) => {
-      const view = views.get(entry.id)
-      if (!view) return null
-      return { ...view, rank: entry.rank, mcap: entry.mcap, priceBtc: entry.priceBtc }
-    })
-    .filter((coin): coin is CoinView => coin !== null),
-}))
+export let cohorts: Cohort[] = []
 
-export const DEFAULT_COHORT = 0
+let loading: Promise<void> | null = null
+
+export function loadCohorts(): Promise<void> {
+  loading ??= fetch(dataUrl)
+    .then((response) => {
+      if (!response.ok) throw new Error(`Could not load chart data (${response.status})`)
+      return response.json() as Promise<Dataset>
+    })
+    .then((dataset) => {
+      const scale = dataset.encoding?.scale ?? 10_000
+      const views = new Map<number, Omit<CoinView, 'rank' | 'mcap' | 'priceBtc'>>()
+      for (const coin of Object.values(dataset.coins)) {
+        const index = paletteIndex(coin.id)
+        views.set(coin.id, {
+          ...coin,
+          vals: decodeVals(coin.vals, scale),
+          color: coinColor(index),
+          ink: inkColor(index),
+          note: NOTES[coin.symbol],
+        })
+      }
+
+      cohorts = dataset.cohorts.map((cohort) => ({
+        year: cohort.year,
+        day: cohort.day,
+        label: `${monthLabel.format(new Date(`${cohort.date}T00:00:00Z`))} ${cohort.year}`,
+        coins: cohort.coins
+          .map((entry) => {
+            const view = views.get(entry.id)
+            if (!view) return null
+            return { ...view, rank: entry.rank, mcap: entry.mcap, priceBtc: entry.priceBtc }
+          })
+          .filter((coin): coin is CoinView => coin !== null),
+      }))
+    })
+  return loading
+}
 
 export function valueAt(coin: RawCoin, day: number): number {
   const { vals, from } = coin

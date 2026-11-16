@@ -41,9 +41,19 @@ One-time setup:
 2. Add a DNS record for the subdomain: `CNAME btcreign → djpnewton.github.io`.
 3. Once the first deploy finishes, tick **Enforce HTTPS** in the same settings page.
 
+## Performance
+
+The page paints before any chart data is parsed: the shell is ~77 kB gzipped JavaScript, and the dataset is fetched as a separate asset once the app mounts (with a skeleton in the meantime).
+
+- `src/data/meta.json` is tiny and bundled — start date, step and length.
+- `src/data/coins.json` is the payload: ~1 MB raw, ~360 kB gzipped.
+- Series are stored as first differences of `log10(value)` at 1e-4 resolution, which roughly halves the payload; the client expands them with a running sum.
+- Only the Latin subset of Inter ships (48 kB); no other scripts are downloaded.
+- The ranking list updates at 10 Hz while the chart scrubs at 60 Hz, so a 100-row reshuffle never blocks a frame.
+
 ## Data
 
-`src/data/coins.json` holds ten snapshots (18 June, 2017–2026) and the BTC-denominated history for every coin that has ever been in one of them — 391 coins, ~2 MB.
+`src/data/coins.json` holds ten snapshots (18 June, 2017–2026) and the BTC-denominated history for every coin that has ever been in one of them — 391 coins.
 
 Each snapshot stores rank, market cap and the BTC price at that date. Each coin stores a series starting at its first snapshot, so a coin listed in 2020 has no wasted history before then.
 
@@ -60,6 +70,7 @@ The script:
 3. Falls back to CoinCodex for coins CoinMarketCap has purged, rejecting any slug whose price on the snapshot date differs from CoinMarketCap's — those slugs get reused by newer tokens (LEO, DICE, EDC…).
 4. Matches the printed 2017 chart for the few coins that only ever appear in that snapshot, since some of their series no longer exist anywhere; Reconstructed paths fall to the printed value over their first month, then hold it.
 5. Records the last day each coin was actually tracked.
+6. Packs each series into log-delta integers and writes `meta.json` alongside `coins.json`.
 
 Raw API responses are cached in `scripts/.cache`, so reruns are fast and work offline. `scripts/top100.json` holds the hand-checked 2017 snapshot, including the final percentages read off the print chart.
 

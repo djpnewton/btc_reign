@@ -8,6 +8,7 @@ export type RawCoin = {
   /** Day index of the last real observation; the path is flat after this. */
   until: number
   src: string
+  /** First differences of log10(value) at `scale` resolution. */
   vals: number[]
 }
 
@@ -15,11 +16,10 @@ export type CohortEntry = { id: number; rank: number; mcap: number; priceBtc: nu
 
 export type CohortRaw = { year: number; date: string; day: number; coins: CohortEntry[] }
 
+export type Meta = { start: string; end: string; step: number; days: number }
+
 export type Dataset = {
-  start: string
-  end: string
-  step: number
-  days: number
+  encoding: { vals: string; scale: number }
   cohorts: CohortRaw[]
   coins: Record<string, RawCoin>
 }

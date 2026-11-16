@@ -329,19 +329,34 @@ for (const coin of registry.values()) {
     from,
     src: source,
     until,
-    vals: normalised.map((value) => Number(value.toPrecision(5))),
+    vals: normalised,
   }
   await sleep(60)
 }
 
 // ---------------------------------------------------------------------------
 // 4. Write.
+//
+// Values are stored as first differences of log10(value) at 1e-4 resolution:
+// the series compress to roughly half the size of the raw numbers, and the
+// client expands them with a running sum.
+
+const SCALE = 10_000
+
+function encodeVals(values) {
+  if (values.length === 0) return []
+  const logs = values.map((value) => Math.round(Math.log10(Math.max(value, 1e-15)) * SCALE))
+  const out = [logs[0]]
+  for (let i = 1; i < logs.length; i++) out.push(logs[i] - logs[i - 1])
+  return out
+}
+
+const encoded = Object.fromEntries(
+  Object.entries(coins).map(([id, coin]) => [id, { ...coin, vals: encodeVals(coin.vals) }]),
+)
 
 const output = {
-  start: iso(START),
-  end: iso(END),
-  step: STEP,
-  days: Math.round(dayOf(END)),
+  encoding: { vals: 'log10-delta', scale: SCALE },
   cohorts: cohorts.map((cohort) => ({
     year: cohort.year,
     date: cohort.date,
@@ -353,13 +368,22 @@ const output = {
       priceBtc: coin.priceBtc,
     })),
   })),
-  coins,
+  coins: encoded,
+}
+
+const meta = {
+  start: iso(START),
+  end: iso(END),
+  step: STEP,
+  days: Math.round(dayOf(END)),
 }
 
 const file = path.join(root, 'src', 'data', 'coins.json')
 await fs.writeFile(file, JSON.stringify(output))
+await fs.writeFile(path.join(root, 'src', 'data', 'meta.json'), `${JSON.stringify(meta)}\n`)
 const size = (await fs.stat(file)).size
 console.log(`\nWrote ${registry.size} coins, ${cohorts.length} cohorts → ${(size / 1024).toFixed(0)} kB`)
+console.log(`  meta: ${JSON.stringify(meta)}`)
 for (const cohort of cohorts) {
   const missing = cohort.coins.filter((coin) => coins[coin.id]?.src === 'none').length
   console.log(`  ${cohort.year}: ${cohort.coins.length} coins, ${missing} without history`)

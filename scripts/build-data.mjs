@@ -2,7 +2,8 @@
  * Rebuilds src/data/coins.json: ten June snapshots (2017-2026) of the top 100 coins
  * by market cap, each with a BTC-denominated history.
  *
- *   node scripts/build-data.mjs
+ *   npm run data             # uses scripts/.cache where possible
+ *   npm run data -- --fresh  # ignore the cache and refetch everything
  *
  * Sources
  *  - CoinMarketCap data API: historical top-100 listings and daily closes in BTC
@@ -13,6 +14,9 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+const args = new Set(process.argv.slice(2))
+const FRESH = args.has('--fresh')
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const cacheDir = path.join(root, 'scripts', '.cache')
@@ -94,7 +98,7 @@ for (let year = FIRST_YEAR; year <= LAST_YEAR; year++) {
   const url =
     'https://api.coinmarketcap.com/data-api/v3/cryptocurrency/listings/historical' +
     `?date=${iso(date)}&start=1&limit=100&sortBy=market_cap&sortType=desc&convert=USD`
-  const raw = await fetchJson(url, `snapshot-${year}.json`)
+  const raw = await fetchJson(url, `snapshot-${year}.json`, { force: FRESH })
   const rows = raw.data ?? []
   if (rows.length < 100) console.warn(`  ${year}: only ${rows.length} rows`)
   const coins = rows
@@ -162,6 +166,7 @@ const endSec = Math.floor(END.getTime() / 1000)
 const btcUsdRaw = await fetchJson(
   `https://api.coinmarketcap.com/data-api/v3/cryptocurrency/historical?id=1&convertId=2781&timeStart=${startSec}&timeEnd=${endSec}`,
   'btc-usd.json',
+  { force: FRESH },
 )
 const btcUsd = btcUsdRaw.data.quotes
   .map((quote) => ({
@@ -176,6 +181,7 @@ async function cmcSeries(id) {
   const raw = await fetchJson(
     `https://api.coinmarketcap.com/data-api/v3/cryptocurrency/historical?id=${id}&convertId=1&timeStart=${startSec}&timeEnd=${endSec}`,
     `cmc-${id}.json`,
+    { force: FRESH },
   )
   const points = raw.data.quotes
     .map((quote) => ({
@@ -204,6 +210,7 @@ async function coincodexSeries(coin) {
       const raw = await fetchJson(
         `https://coincodex.com/api/coincodex/get_coin_history/${slug}/${iso(START)}/${iso(END)}/1800`,
         `cc-${slug}.json`,
+        { force: FRESH },
       )
       const key = Object.keys(raw)[0]
       if (!key) continue

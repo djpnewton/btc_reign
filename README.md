@@ -57,11 +57,19 @@ The page paints before any chart data is parsed: the shell is ~77 kB gzipped Jav
 
 Each snapshot stores rank, market cap and the BTC price at that date. Each coin stores a series starting at its first snapshot, so a coin listed in 2020 has no wasted history before then.
 
-Refresh it with:
+### Rebuilding the data
 
 ```bash
-node scripts/build-data.mjs
+npm run data               # reuse scripts/.cache where possible (~30 s)
+npm run data -- --fresh    # ignore the cache and refetch everything (~5-10 min)
 ```
+
+`--fresh` also re-resolves the CoinCodex slugs, which occasionally change hands; the
+price check still rejects any series that doesn't match CoinMarketCap's snapshot.
+
+The rebuild always runs through today, so regenerating is how you extend the chart with new
+days. It only rewrites `src/data/coins.json` and `src/data/meta.json` — commit those two files:
+the deploy workflow builds the site but never touches the network.
 
 The script:
 
